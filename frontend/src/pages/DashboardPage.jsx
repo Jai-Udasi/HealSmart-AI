@@ -1,0 +1,421 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Users,
+  Stethoscope,
+  FileText,
+  ShieldAlert,
+  CheckCircle2,
+  RefreshCw,
+  Clock,
+  Activity,
+} from 'lucide-react';
+import {
+  GlassCard,
+  Button,
+  NoticeBanner,
+  LoadingState,
+  ErrorState,
+} from '../components/UI';
+import { dashboardApi, notesApi } from '../api/client';
+
+export default function DashboardPage() {
+  const [stats, setStats] = useState(null);
+  const [recentChecks, setRecentChecks] = useState([]);
+  const [recentPagination, setRecentPagination] = useState(null);
+  const [recentPage, setRecentPage] = useState(1);
+  const [severityFilter, setSeverityFilter] = useState('');
+  const [recentNotes, setRecentNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const loadDashboard = useCallback(
+    async (targetPage = recentPage, targetSeverity = severityFilter) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [statsRes, recentRes, notesRes] = await Promise.all([
+          dashboardApi.stats(),
+          dashboardApi.recent({
+            page: targetPage,
+            limit: 6,
+            severity: targetSeverity || undefined,
+          }),
+          notesApi.list({ page: 1, limit: 5 }),
+        ]);
+
+        setStats(statsRes.data);
+        setRecentChecks(recentRes.data?.recent_checks || []);
+        setRecentPagination(recentRes.data?.pagination || null);
+        setRecentNotes(notesRes.data?.notes || []);
+      } catch (err) {
+        setError(err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [recentPage, severityFilter]
+  );
+
+  useEffect(() => {
+    loadDashboard(recentPage, severityFilter);
+  }, [loadDashboard, recentPage, severityFilter]);
+
+  const handleSeverityChange = (newSeverity) => {
+    setRecentPage(1);
+    setSeverityFilter(newSeverity);
+  };
+
+  const totalChecks = stats?.total_symptom_checks || 0;
+  const mildCount = stats?.severity_breakdown?.mild || 0;
+  const modCount = stats?.severity_breakdown?.moderate || 0;
+  const sevCount = stats?.severity_breakdown?.severe || 0;
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Doctor Dashboard (Fictional Clinical Demo)</h1>
+          <p className="page-description">
+            Live SQLite aggregate statistics, recent symptom evaluations, and fictional clinician notes.
+          </p>
+        </div>
+        <Button
+          variant="secondary"
+          icon={RefreshCw}
+          onClick={() => loadDashboard(recentPage, severityFilter)}
+        >
+          Refresh Metrics
+        </Button>
+      </div>
+
+      <NoticeBanner variant="warning" title="Fictional Clinical Demonstration — Not a Real Doctor Portal">
+        This dashboard displays aggregated metrics from local fictional demonstration records. No real physician or licensed healthcare professional has reviewed any symptom check or note shown here.
+      </NoticeBanner>
+
+      {loading && !stats ? (
+        <LoadingState label="Fetching live SQLite dashboard statistics…" />
+      ) : error ? (
+        <ErrorState
+          title="Failed to load dashboard metrics"
+          message={error.message}
+          onRetry={() => loadDashboard(recentPage, severityFilter)}
+        />
+      ) : (
+        <>
+          {/* Top 4 KPI Stat Cards */}
+          <div className="grid-cards" style={{ marginBottom: '1.5rem' }}>
+            <GlassCard>
+              <div className="stat-card">
+                <div>
+                  <div className="stat-label">Demo Patients</div>
+                  <div className="stat-value" data-testid="stat-total-patients">
+                    {stats?.total_patients ?? 0}
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                    +{stats?.recent_activity?.new_patients_last_7d ?? 0} added in last 7 days
+                  </div>
+                </div>
+                <div className="brand-icon" style={{ background: 'var(--primary)' }}>
+                  <Users size={20} />
+                </div>
+              </div>
+            </GlassCard>
+
+            <GlassCard>
+              <div className="stat-card">
+                <div>
+                  <div className="stat-label">Total Symptom Checks</div>
+                  <div className="stat-value" data-testid="stat-total-checks">
+                    {stats?.total_symptom_checks ?? 0}
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                    {stats?.recent_activity?.symptom_checks_last_24h ?? 0} in last 24 hours
+                  </div>
+                </div>
+                <div className="brand-icon" style={{ background: 'var(--teal)' }}>
+                  <Stethoscope size={20} />
+                </div>
+              </div>
+            </GlassCard>
+
+            <GlassCard>
+              <div className="stat-card">
+                <div>
+                  <div className="stat-label">Fictional Doctor Notes</div>
+                  <div className="stat-value" data-testid="stat-total-notes">
+                    {stats?.total_doctor_notes ?? 0}
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                    +{stats?.recent_activity?.doctor_notes_last_7d ?? 0} added in last 7 days
+                  </div>
+                </div>
+                <div className="brand-icon" style={{ background: '#0369a1' }}>
+                  <FileText size={20} />
+                </div>
+              </div>
+            </GlassCard>
+
+            <GlassCard>
+              <div className="stat-card">
+                <div>
+                  <div className="stat-label">Emergency Warning Checks</div>
+                  <div
+                    className="stat-value"
+                    style={{ color: (stats?.emergency_warning_checks ?? 0) > 0 ? 'var(--danger)' : 'var(--text-primary)' }}
+                    data-testid="stat-emergency-warnings"
+                  >
+                    {stats?.emergency_warning_checks ?? 0}
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                    Red-flag rule keyword matches
+                  </div>
+                </div>
+                <div className="brand-icon" style={{ background: 'var(--danger)' }}>
+                  <ShieldAlert size={20} />
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+
+          {/* Severity Breakdown & Recent Notes Row */}
+          <div className="grid-2col" style={{ marginBottom: '1.5rem', alignItems: 'start' }}>
+            {/* Severity Breakdown Card */}
+            <GlassCard>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
+                <Activity size={20} color="var(--primary)" />
+                <h2 style={{ fontSize: '1.05rem', fontWeight: 600 }}>
+                  Symptom Check Severity Breakdown
+                </h2>
+              </div>
+
+              {totalChecks === 0 ? (
+                <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)' }}>
+                  No symptom checks recorded yet.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
+                  {[
+                    { key: 'mild', label: 'Mild Severity', count: mildCount, color: 'var(--primary)', badge: 'badge-info' },
+                    { key: 'moderate', label: 'Moderate Severity', count: modCount, color: 'var(--warning)', badge: 'badge-warning' },
+                    { key: 'severe', label: 'Severe Severity', count: sevCount, color: 'var(--danger)', badge: 'badge-danger' },
+                  ].map((item) => {
+                    const pct = totalChecks > 0 ? Math.round((item.count / totalChecks) * 100) : 0;
+                    return (
+                      <div key={item.key}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.3rem' }}>
+                          <span style={{ fontWeight: 600 }}>{item.label}</span>
+                          <span>
+                            <strong>{item.count}</strong> ({pct}%)
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            height: 8,
+                            width: '100%',
+                            background: 'var(--surface-muted)',
+                            borderRadius: 'var(--radius-full)',
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: '100%',
+                              width: `${pct}%`,
+                              background: item.color,
+                              borderRadius: 'var(--radius-full)',
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </GlassCard>
+
+            {/* Recent Fictional Doctor Notes Feed */}
+            <GlassCard>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <FileText size={20} color="var(--teal)" />
+                  <h2 style={{ fontSize: '1.05rem', fontWeight: 600 }}>
+                    Recent Fictional Doctor Notes
+                  </h2>
+                </div>
+                <Link to="/patients" style={{ fontSize: '0.82rem', fontWeight: 600 }}>
+                  Manage via Patients →
+                </Link>
+              </div>
+
+              {recentNotes.length === 0 ? (
+                <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)' }}>
+                  No fictional clinician notes saved yet. Open any demo patient record to add a note.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {recentNotes.map((note) => (
+                    <div
+                      key={note.id}
+                      style={{
+                        background: 'var(--surface-solid)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '0.75rem 0.9rem',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.8rem', marginBottom: '0.25rem' }}>
+                        <div>
+                          <strong>{note.author}</strong> ·{' '}
+                          <Link to={`/patients/${note.patient_id}`} style={{ fontWeight: 600 }}>
+                            {note.patient_name || `Patient #${note.patient_id}`}
+                          </Link>
+                        </div>
+                        <span className="badge badge-teal" style={{ textTransform: 'capitalize' }}>
+                          {note.note_type.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        {note.content}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </GlassCard>
+          </div>
+
+          {/* Recent Symptom Check Activity Table */}
+          <GlassCard>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <Stethoscope size={20} color="var(--primary)" />
+                <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>
+                  Recent Symptom Check Activity Feed
+                </h2>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <label htmlFor="dashboard-severity-filter" style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  Filter Severity:
+                </label>
+                <select
+                  id="dashboard-severity-filter"
+                  className="form-select"
+                  style={{ width: 'auto', padding: '0.35rem 0.7rem', fontSize: '0.82rem' }}
+                  value={severityFilter}
+                  onChange={(e) => handleSeverityChange(e.target.value)}
+                >
+                  <option value="">All Severities</option>
+                  <option value="mild">Mild</option>
+                  <option value="moderate">Moderate</option>
+                  <option value="severe">Severe</option>
+                </select>
+              </div>
+            </div>
+
+            {recentChecks.length === 0 ? (
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                No symptom checks match the current filter.
+              </p>
+            ) : (
+              <>
+                <div className="table-container">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Demo Patient</th>
+                        <th>Submitted Symptoms</th>
+                        <th>Matched Categories</th>
+                        <th>Severity</th>
+                        <th>Safety Status</th>
+                        <th>Created (UTC)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recentChecks.map((chk) => (
+                        <tr key={chk.id}>
+                          <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>#{chk.id}</td>
+                          <td>
+                            {chk.patient_id ? (
+                              <Link to={`/patients/${chk.patient_id}`} style={{ fontWeight: 600 }}>
+                                {chk.patient_name}
+                              </Link>
+                            ) : (
+                              <span style={{ color: 'var(--text-muted)' }}>{chk.patient_name}</span>
+                            )}
+                          </td>
+                          <td>
+                            {Array.isArray(chk.symptoms) ? chk.symptoms.join(', ') : chk.symptoms}
+                          </td>
+                          <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            {chk.matched_categories?.join(' • ') || '—'}
+                          </td>
+                          <td>
+                            <span
+                              className={`badge ${
+                                chk.severity === 'severe'
+                                  ? 'badge-danger'
+                                  : chk.severity === 'moderate'
+                                  ? 'badge-warning'
+                                  : 'badge-info'
+                              }`}
+                            >
+                              {chk.severity}
+                            </span>
+                          </td>
+                          <td>
+                            {chk.is_emergency_warning ? (
+                              <span className="badge badge-danger">
+                                <ShieldAlert size={12} />
+                                Emergency Warning
+                              </span>
+                            ) : (
+                              <span className="badge badge-success">
+                                <CheckCircle2 size={12} />
+                                Standard
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                            <Clock size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                            {chk.created_at}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {recentPagination && recentPagination.total_pages > 1 && (
+                  <div className="pagination-bar">
+                    <span>
+                      Page {recentPagination.page} of {recentPagination.total_pages} ({recentPagination.total} total)
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <Button
+                        variant="secondary"
+                        disabled={!recentPagination.has_prev}
+                        onClick={() => setRecentPage((p) => Math.max(1, p - 1))}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        disabled={!recentPagination.has_next}
+                        onClick={() => setRecentPage((p) => p + 1)}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </GlassCard>
+        </>
+      )}
+    </div>
+  );
+}

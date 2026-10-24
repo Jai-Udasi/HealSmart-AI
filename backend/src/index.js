@@ -9,10 +9,15 @@ const rateLimit = require('express-rate-limit');
 
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const healthRouter = require('./routes/health');
+const patientsRouter = require('./routes/patients');
+const symptomsRouter = require('./routes/symptoms');
+const dashboardRouter = require('./routes/dashboard');
+const notesRouter = require('./routes/notes');
 const { getDb, closeDb } = require('./db/database');
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '5000', 10);
+const HOST = process.env.HOST || '127.0.0.1';
 
 // ── Security & transport middleware ────────────────────────────────────────
 app.use(helmet());
@@ -54,15 +59,10 @@ if (process.env.NODE_ENV !== 'production') {
 
 // ── Routes ─────────────────────────────────────────────────────────────────
 app.use('/api/health', healthRouter);
-
-// Placeholder stubs for future phases (returns 501 Not Implemented)
-const stub = (label) => (_req, res) =>
-  res.status(501).json({ success: false, error: { message: `${label} — coming in a later phase` } });
-
-app.use('/api/patients',  stub('Patients API'));
-app.use('/api/symptoms',  stub('Symptoms API'));
-app.use('/api/dashboard', stub('Dashboard API'));
-app.use('/api/notes',     stub('Notes API'));
+app.use('/api/patients', patientsRouter);
+app.use('/api/symptoms', symptomsRouter);
+app.use('/api/dashboard', dashboardRouter);
+app.use('/api/notes', notesRouter);
 
 // ── 404 & error handlers ───────────────────────────────────────────────────
 app.use(notFoundHandler);
@@ -76,10 +76,11 @@ try {
   process.exit(1);
 }
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`\n🏥  HealSmartAI API running`);
-  console.log(`    http://localhost:${PORT}/api/health`);
-  console.log(`    ENV: ${process.env.NODE_ENV || 'development'}\n`);
+  console.log(`    http://localhost:${PORT}/api/health (bound to ${HOST})`);
+  console.log(`    ENV: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`    [NOTICE] Local-only demo server: Authentication & RBAC are NOT implemented.\n`);
 });
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────
