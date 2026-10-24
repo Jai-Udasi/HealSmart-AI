@@ -5,11 +5,15 @@ const Joi = require('joi');
 const { getDb } = require('../db/database');
 const validate = require('../middleware/validate');
 const asyncHandler = require('../middleware/asyncHandler');
+const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Doctor Dashboard endpoints require verified authentication AND the 'doctor' role
+router.use(requireAuth, requireRole('doctor'));
+
 const DEMO_DASHBOARD_NOTICE =
-  'DEMO-ONLY: This dashboard displays aggregated statistics from local fictional demonstration records. No real doctor or licensed clinician has reviewed any symptom checks or records in this system.';
+  'DEMO-ONLY: This dashboard displays role-scoped aggregated statistics for patients explicitly assigned to this doctor account. No real doctor or licensed clinician has reviewed any symptom checks or records in this system.';
 
 // ── Joi Validation Schemas ─────────────────────────────────────────────────
 
@@ -21,46 +25,81 @@ const recentQuerySchema = Joi.object({
   }),
 });
 
+// SQL condition scoping patients strictly to those explicitly assigned to the authenticated doctor
+const DOCTOR_PATIENT_SCOPE = `
+  p.owner_user_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1 FROM doctor_patient_assignments dpa
+    WHERE dpa.patient_id = p.id AND dpa.doctor_user_id = @doctorId
+  )
+`;
+
+const DOCTOR_CHECK_SCOPE = `
+  (
+    sc.patient_id IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM patients p
+      WHERE p.id = sc.patient_id
+        AND ${DOCTOR_PATIENT_SCOPE}
+    )
+  )
+`;
+
 // ── Route Handlers ─────────────────────────────────────────────────────────
 
 /**
  * GET /api/dashboard/stats
- * Returns real SQLite aggregate counts across patients, symptom_checks, and doctor_notes.
+ * Returns role-scoped SQLite aggregate counts across patients assigned to req.user.id.
+ * Never exposes global patient aggregates across unassigned patients.
  */
 router.get(
   '/stats',
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
     const db = getDb();
+    const doctorId = req.user.id;
 
     const totalPatients = db
-      .prepare('SELECT COUNT(*) AS count FROM patients')
-      .get().count;
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM patients p
+        WHERE ${DOCTOR_PATIENT_SCOPE}
+      `)
+      .get({ doctorId }).count;
 
     const totalSymptomChecks = db
-      .prepare('SELECT COUNT(*) AS count FROM symptom_checks')
-      .get().count;
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM symptom_checks sc
+        WHERE ${DOCTOR_CHECK_SCOPE}
+      `)
+      .get({ doctorId }).count;
 
     const totalDoctorNotes = db
-      .prepare('SELECT COUNT(*) AS count FROM doctor_notes')
-      .get().count;
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM doctor_notes dn
+        JOIN patients p ON dn.patient_id = p.id
+        WHERE ${DOCTOR_PATIENT_SCOPE}
+      `)
+      .get({ doctorId }).count;
 
-    // Count symptom checks where the rule engine flagged emergency_safety.is_emergency_warning = true
     const emergencyChecksCount = db
       .prepare(`
         SELECT COUNT(*) AS count
-        FROM symptom_checks
-        WHERE json_extract(response, '$.emergency_safety.is_emergency_warning') = 1
+        FROM symptom_checks sc
+        WHERE ${DOCTOR_CHECK_SCOPE}
+          AND json_extract(sc.response, '$.emergency_safety.is_emergency_warning') = 1
       `)
-      .get().count;
+      .get({ doctorId }).count;
 
-    // Breakdown by severity
     const severityRows = db
       .prepare(`
-        SELECT severity, COUNT(*) AS count
-        FROM symptom_checks
-        GROUP BY severity
+        SELECT sc.severity, COUNT(*) AS count
+        FROM symptom_checks sc
+        WHERE ${DOCTOR_CHECK_SCOPE}
+        GROUP BY sc.severity
       `)
-      .all();
+      .all({ doctorId });
 
     const severityBreakdown = { mild: 0, moderate: 0, severe: 0 };
     for (const row of severityRows) {
@@ -69,43 +108,48 @@ router.get(
       }
     }
 
-    // Recent activity in the last 24 hours and 7 days based on SQLite datetime
     const checksLast24h = db
       .prepare(`
         SELECT COUNT(*) AS count
-        FROM symptom_checks
-        WHERE created_at >= datetime('now', '-1 day')
+        FROM symptom_checks sc
+        WHERE ${DOCTOR_CHECK_SCOPE}
+          AND sc.created_at >= datetime('now', '-1 day')
       `)
-      .get().count;
+      .get({ doctorId }).count;
 
     const checksLast7d = db
       .prepare(`
         SELECT COUNT(*) AS count
-        FROM symptom_checks
-        WHERE created_at >= datetime('now', '-7 days')
+        FROM symptom_checks sc
+        WHERE ${DOCTOR_CHECK_SCOPE}
+          AND sc.created_at >= datetime('now', '-7 days')
       `)
-      .get().count;
+      .get({ doctorId }).count;
 
     const notesLast7d = db
       .prepare(`
         SELECT COUNT(*) AS count
-        FROM doctor_notes
-        WHERE created_at >= datetime('now', '-7 days')
+        FROM doctor_notes dn
+        JOIN patients p ON dn.patient_id = p.id
+        WHERE ${DOCTOR_PATIENT_SCOPE}
+          AND dn.created_at >= datetime('now', '-7 days')
       `)
-      .get().count;
+      .get({ doctorId }).count;
 
     const patientsLast7d = db
       .prepare(`
         SELECT COUNT(*) AS count
-        FROM patients
-        WHERE created_at >= datetime('now', '-7 days')
+        FROM patients p
+        WHERE ${DOCTOR_PATIENT_SCOPE}
+          AND p.created_at >= datetime('now', '-7 days')
       `)
-      .get().count;
+      .get({ doctorId }).count;
 
     return res.status(200).json({
       success: true,
       meta: {
         demo_notice: DEMO_DASHBOARD_NOTICE,
+        access_scope: 'assigned_patients_only',
       },
       data: {
         total_patients: totalPatients,
@@ -126,8 +170,7 @@ router.get(
 
 /**
  * GET /api/dashboard/recent
- * Returns paginated recent symptom checks with fictional patient names, severity,
- * creation date, and emergency warning status.
+ * Returns paginated recent symptom checks scoped strictly to the authenticated doctor's assigned patients.
  */
 router.get(
   '/recent',
@@ -136,58 +179,45 @@ router.get(
     const db = getDb();
     const { page, limit, severity } = req.validatedQuery;
     const offset = (page - 1) * limit;
+    const doctorId = req.user.id;
 
-    let total;
-    let rows;
+    const severityClause = severity ? 'AND sc.severity = @severity' : '';
+    const params = {
+      doctorId,
+      limit,
+      offset,
+      ...(severity ? { severity } : {}),
+    };
 
-    if (severity) {
-      total = db
-        .prepare('SELECT COUNT(*) AS count FROM symptom_checks WHERE severity = @severity')
-        .get({ severity }).count;
+    const total = db
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM symptom_checks sc
+        WHERE ${DOCTOR_CHECK_SCOPE}
+          ${severityClause}
+      `)
+      .get(params).count;
 
-      rows = db
-        .prepare(`
-          SELECT
-            sc.id,
-            sc.patient_id,
-            p.first_name AS patient_first_name,
-            p.last_name  AS patient_last_name,
-            sc.symptoms,
-            sc.duration,
-            sc.severity,
-            sc.response,
-            sc.created_at
-          FROM symptom_checks sc
-          LEFT JOIN patients p ON sc.patient_id = p.id
-          WHERE sc.severity = @severity
-          ORDER BY sc.id DESC
-          LIMIT @limit OFFSET @offset
-        `)
-        .all({ severity, limit, offset });
-    } else {
-      total = db
-        .prepare('SELECT COUNT(*) AS count FROM symptom_checks')
-        .get().count;
-
-      rows = db
-        .prepare(`
-          SELECT
-            sc.id,
-            sc.patient_id,
-            p.first_name AS patient_first_name,
-            p.last_name  AS patient_last_name,
-            sc.symptoms,
-            sc.duration,
-            sc.severity,
-            sc.response,
-            sc.created_at
-          FROM symptom_checks sc
-          LEFT JOIN patients p ON sc.patient_id = p.id
-          ORDER BY sc.id DESC
-          LIMIT @limit OFFSET @offset
-        `)
-        .all({ limit, offset });
-    }
+    const rows = db
+      .prepare(`
+        SELECT
+          sc.id,
+          sc.patient_id,
+          p.first_name AS patient_first_name,
+          p.last_name  AS patient_last_name,
+          sc.symptoms,
+          sc.duration,
+          sc.severity,
+          sc.response,
+          sc.created_at
+        FROM symptom_checks sc
+        LEFT JOIN patients p ON sc.patient_id = p.id
+        WHERE ${DOCTOR_CHECK_SCOPE}
+          ${severityClause}
+        ORDER BY sc.id DESC
+        LIMIT @limit OFFSET @offset
+      `)
+      .all(params);
 
     const recentChecks = rows.map((row) => {
       let parsedSymptoms = [];
@@ -217,8 +247,8 @@ router.get(
         patient_id: row.patient_id,
         patient_name:
           row.patient_first_name && row.patient_last_name
-            ? `${row.patient_first_name} ${row.patient_last_name} (Demo)`
-            : 'Anonymous Demo User',
+            ? `${row.patient_first_name} ${row.patient_last_name}`
+            : 'Assigned Patient',
         symptoms: parsedSymptoms,
         duration: row.duration,
         severity: row.severity,
@@ -235,6 +265,7 @@ router.get(
       success: true,
       meta: {
         demo_notice: DEMO_DASHBOARD_NOTICE,
+        access_scope: 'assigned_patients_only',
       },
       data: {
         recent_checks: recentChecks,

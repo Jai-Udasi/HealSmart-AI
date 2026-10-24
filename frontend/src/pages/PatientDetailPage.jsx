@@ -12,6 +12,9 @@ import {
   CheckCircle2,
   Clock,
   X,
+  UserCheck,
+  UserMinus,
+  Lock,
 } from 'lucide-react';
 import {
   GlassCard,
@@ -19,32 +22,41 @@ import {
   FormField,
   NoticeBanner,
   LoadingState,
-  ErrorState,
 } from '../components/UI';
-import { patientsApi, symptomsApi, notesApi } from '../api/client';
+import { patientsApi, symptomsApi, notesApi, authApi } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Unknown'];
 const NOTE_TYPES = [
   { value: 'general', label: 'General Note' },
-  { value: 'diagnosis', label: 'Assessment / Impression (Demo)' },
-  { value: 'prescription', label: 'Medication Plan (Demo)' },
-  { value: 'follow_up', label: 'Follow-Up Plan' },
-  { value: 'lab_result', label: 'Lab / Test Summary (Demo)' },
+  { value: 'diagnosis', label: 'Clinical Assessment / Impression' },
+  { value: 'prescription', label: 'Medication & Care Plan' },
+  { value: 'follow_up', label: 'Follow-Up Recommendation' },
+  { value: 'lab_result', label: 'Lab / Diagnostic Summary' },
 ];
 
 export default function PatientDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { currentUser } = useAuth();
+  const isDoctor = currentUser?.role === 'doctor';
 
   const [patient, setPatient] = useState(null);
   const [symptomHistory, setSymptomHistory] = useState([]);
   const [notes, setNotes] = useState([]);
+  const [availableDoctors, setAvailableDoctors] = useState([]);
+  const [selectedDoctorId, setSelectedDoctorId] = useState('');
+  const [assigningDoctor, setAssigningDoctor] = useState(false);
+  const [revokingDoctorId, setRevokingDoctorId] = useState(null);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [feedback, setFeedback] = useState(null);
 
-  // Add Fictional Note Form State
-  const [noteAuthor, setNoteAuthor] = useState('Dr. Attending (Fictional Demo)');
+  // Add Clinical Note Form State (Doctor only)
+  const [noteAuthor, setNoteAuthor] = useState(
+    currentUser?.displayName || currentUser?.email || 'Attending Doctor'
+  );
   const [noteType, setNoteType] = useState('general');
   const [noteContent, setNoteContent] = useState('');
   const [noteErrors, setNoteErrors] = useState({});
@@ -67,12 +79,14 @@ export default function PatientDetailPage() {
       const patientRes = await patientsApi.getById(id);
       setPatient(patientRes.data);
 
-      const [symRes, notesRes] = await Promise.all([
+      const [symRes, notesRes, docsRes] = await Promise.all([
         symptomsApi.history({ patient_id: id, page: 1, limit: 25 }),
         notesApi.list({ patient_id: id, page: 1, limit: 25 }),
+        authApi.listDoctors().catch(() => ({ data: { doctors: [] } })),
       ]);
       setSymptomHistory(symRes.data?.checks || []);
       setNotes(notesRes.data?.notes || []);
+      setAvailableDoctors(docsRes.data?.doctors || []);
     } catch (err) {
       setError(err);
     } finally {
@@ -83,6 +97,18 @@ export default function PatientDetailPage() {
   useEffect(() => {
     loadPatientData();
   }, [loadPatientData]);
+
+  useEffect(() => {
+    if (currentUser?.displayName) {
+      setNoteAuthor(currentUser.displayName);
+    } else if (currentUser?.email) {
+      setNoteAuthor(currentUser.email);
+    }
+  }, [currentUser?.displayName, currentUser?.email]);
+
+  const isOwner = Boolean(
+    patient && currentUser?.sqliteId && patient.owner_user_id === currentUser.sqliteId
+  );
 
   const openEditModal = () => {
     if (!patient) return;
@@ -136,12 +162,15 @@ export default function PatientDetailPage() {
         notes: editForm.notes.trim() || null,
       };
       const updated = await patientsApi.update(id, payload);
-      setPatient(updated.data);
+      setPatient((prev) => ({
+        ...updated.data,
+        assigned_doctors: updated.data?.assigned_doctors || prev?.assigned_doctors || [],
+      }));
       setEditOpen(false);
       setFeedback({
         variant: 'success',
-        title: 'Patient Record Updated',
-        message: 'Successfully saved changes to this fictional patient record.',
+        title: 'Health Record Updated',
+        message: 'Successfully saved changes to this patient profile.',
       });
     } catch (err) {
       if (Array.isArray(err.details)) {
@@ -176,9 +205,57 @@ export default function PatientDetailPage() {
     }
   };
 
+  const handleAssignDoctor = async (e) => {
+    e.preventDefault();
+    if (!selectedDoctorId || assigningDoctor) return;
+    setAssigningDoctor(true);
+    try {
+      await patientsApi.assignDoctor(id, Number(selectedDoctorId));
+      const refreshed = await patientsApi.getById(id);
+      setPatient(refreshed.data);
+      setSelectedDoctorId('');
+      setFeedback({
+        variant: 'success',
+        title: 'Doctor Assigned',
+        message: 'Successfully granted doctor access to this health profile.',
+      });
+    } catch (err) {
+      setFeedback({
+        variant: 'danger',
+        title: 'Doctor Assignment Failed',
+        message: err.message,
+      });
+    } finally {
+      setAssigningDoctor(false);
+    }
+  };
+
+  const handleRevokeDoctor = async (doctorUserId, doctorLabel) => {
+    if (revokingDoctorId) return;
+    setRevokingDoctorId(doctorUserId);
+    try {
+      await patientsApi.revokeDoctor(id, doctorUserId);
+      const refreshed = await patientsApi.getById(id);
+      setPatient(refreshed.data);
+      setFeedback({
+        variant: 'info',
+        title: 'Doctor Access Revoked',
+        message: `Revoked access for ${doctorLabel}. They can no longer view this record or add notes.`,
+      });
+    } catch (err) {
+      setFeedback({
+        variant: 'danger',
+        title: 'Revocation Failed',
+        message: err.message,
+      });
+    } finally {
+      setRevokingDoctorId(null);
+    }
+  };
+
   const handleAddNote = async (e) => {
     e.preventDefault();
-    if (addingNote) return;
+    if (addingNote || !isDoctor) return;
 
     const errs = {};
     if (!noteAuthor.trim() || noteAuthor.trim().length < 2) {
@@ -206,8 +283,8 @@ export default function PatientDetailPage() {
       setNoteContent('');
       setFeedback({
         variant: 'success',
-        title: 'Fictional Clinician Note Added',
-        message: 'Saved new demo note to SQLite.',
+        title: 'Clinical Note Saved',
+        message: 'Your clinical note has been saved to this patient record.',
       });
     } catch (err) {
       if (Array.isArray(err.details)) {
@@ -225,7 +302,7 @@ export default function PatientDetailPage() {
   };
 
   if (loading) {
-    return <LoadingState label={`Loading demo patient record #${id}…`} />;
+    return <LoadingState label={`Loading patient health record #${id}…`} />;
   }
 
   if (error || !patient) {
@@ -234,21 +311,26 @@ export default function PatientDetailPage() {
         <div style={{ marginBottom: '1rem' }}>
           <Link to="/patients" className="btn btn-secondary">
             <ArrowLeft size={15} />
-            <span>Back to Patient Records</span>
+            <span>{isDoctor ? 'Back to Assigned Patients' : 'Back to My Health Profile'}</span>
           </Link>
         </div>
         <GlassCard style={{ textAlign: 'center', padding: '2.5rem 1.5rem' }}>
           <h1 className="page-title" style={{ marginBottom: '0.5rem' }}>
-            {error?.status === 404 ? `Demo Patient #${id} Not Found` : 'Unable to Load Patient Record'}
+            {error?.status === 404
+              ? `Patient Record #${id} Not Found`
+              : error?.status === 403
+              ? 'Access Denied to Patient Record'
+              : 'Unable to Load Patient Record'}
           </h1>
           <p className="page-description" style={{ marginBottom: '1.25rem' }}>
-            {error?.message || 'This fictional patient record may have been deleted or does not exist.'}
+            {error?.message ||
+              'This patient record may have been deleted or you do not have permission to view it.'}
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem' }}>
             <Link to="/patients" className="btn btn-primary">
-              Return to Patient Directory
+              {isDoctor ? 'Return to Assigned Patients' : 'Return to My Health Profile'}
             </Link>
-            {error?.status !== 404 && (
+            {error?.status !== 404 && error?.status !== 403 && (
               <Button variant="secondary" onClick={loadPatientData}>
                 Retry
               </Button>
@@ -258,6 +340,11 @@ export default function PatientDetailPage() {
       </div>
     );
   }
+
+  const assignedDoctors = patient.assigned_doctors || [];
+  const unassignedDoctors = availableDoctors.filter(
+    (doc) => !assignedDoctors.some((assigned) => assigned.id === doc.id)
+  );
 
   return (
     <div>
@@ -276,20 +363,20 @@ export default function PatientDetailPage() {
               }}
             >
               <ArrowLeft size={15} />
-              <span>Back to Patient Records</span>
+              <span>{isDoctor ? 'Back to Assigned Patients' : 'Back to My Health Profile'}</span>
             </Link>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
             <h1 className="page-title">
               {patient.first_name} {patient.last_name}
             </h1>
-            <span className="badge badge-teal">Demo Patient #{patient.id}</span>
+            <span className="badge badge-teal">Record #{patient.id}</span>
             {patient.blood_type && (
               <span className="badge badge-info">Blood Type: {patient.blood_type}</span>
             )}
           </div>
           <p className="page-description">
-            Fictional demonstration patient record · Created {patient.created_at}
+            Patient Health Record · Created {patient.created_at}
           </p>
         </div>
 
@@ -297,14 +384,16 @@ export default function PatientDetailPage() {
           <Button variant="secondary" icon={Edit3} onClick={openEditModal}>
             Edit Profile
           </Button>
-          <Button variant="danger" icon={Trash2} onClick={() => setDeleteOpen(true)}>
-            Delete Patient
-          </Button>
+          {isOwner && (
+            <Button variant="danger" icon={Trash2} onClick={() => setDeleteOpen(true)}>
+              Delete Profile
+            </Button>
+          )}
         </div>
       </div>
 
-      <NoticeBanner variant="info" title="Fictional Demonstration Patient Record">
-        This profile and all associated notes or symptom checks are fictional demonstration records stored locally in SQLite. No real clinician has reviewed this information.
+      <NoticeBanner variant="info" title="Educational & Non-Diagnostic Health Record">
+        This health record, symptom history, and clinical notes are stored locally in SQLite for educational and workflow purposes. Do not rely on this application for emergency medical care.
       </NoticeBanner>
 
       {feedback && (
@@ -328,7 +417,7 @@ export default function PatientDetailPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
           <User size={20} color="var(--primary)" />
           <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>
-            Demographic & Medical Summary (Demo)
+            Demographic &amp; Medical Summary
           </h2>
         </div>
 
@@ -344,33 +433,121 @@ export default function PatientDetailPage() {
             </div>
           </div>
           <div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Demo Email</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Email</div>
             <div style={{ fontSize: '0.95rem', fontWeight: 500 }}>{patient.email || 'Not provided'}</div>
           </div>
           <div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Demo Phone</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Phone</div>
             <div style={{ fontSize: '0.95rem', fontWeight: 500 }}>{patient.phone || 'Not provided'}</div>
           </div>
           <div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Fictional Address</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Address</div>
             <div style={{ fontSize: '0.95rem', fontWeight: 500 }}>{patient.address || 'Not provided'}</div>
           </div>
           <div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Allergies (Demo)</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Allergies</div>
             <div style={{ fontSize: '0.95rem', fontWeight: 500 }}>{patient.allergies || 'None recorded'}</div>
           </div>
           <div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Medications (Demo)</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Current Medications</div>
             <div style={{ fontSize: '0.95rem', fontWeight: 500 }}>{patient.medications || 'None recorded'}</div>
           </div>
           <div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Profile Notes</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Medical History / Notes</div>
             <div style={{ fontSize: '0.95rem', fontWeight: 500 }}>{patient.notes || 'None'}</div>
           </div>
         </div>
       </GlassCard>
 
-      {/* Two-Column Section: Symptom Check History & Fictional Clinician Notes */}
+      {/* Doctor Access & Assignment Card */}
+      <GlassCard style={{ marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
+          <div style={{ flex: '1 1 320px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+              <UserCheck size={19} color="var(--teal)" />
+              <h2 style={{ fontSize: '1.02rem', fontWeight: 600 }}>
+                Authorized Doctors ({assignedDoctors.length})
+              </h2>
+            </div>
+            {assignedDoctors.length === 0 ? (
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                No doctors are currently assigned to this patient record.
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+                {assignedDoctors.map((doc) => (
+                  <div
+                    key={doc.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '0.75rem',
+                      padding: '0.5rem 0.75rem',
+                      background: 'var(--surface-solid)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-sm)',
+                    }}
+                  >
+                    <div>
+                      <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>
+                        {doc.display_name || doc.email}
+                      </span>{' '}
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        ({doc.email})
+                      </span>
+                    </div>
+                    {isOwner && (
+                      <Button
+                        type="button"
+                        variant="danger"
+                        icon={UserMinus}
+                        loading={revokingDoctorId === doc.id}
+                        onClick={() => handleRevokeDoctor(doc.id, doc.display_name || doc.email)}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.78rem' }}
+                      >
+                        Revoke Access
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {isOwner && unassignedDoctors.length > 0 && (
+            <form
+              onSubmit={handleAssignDoctor}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}
+            >
+              <select
+                className="form-select"
+                aria-label="Select a doctor to assign"
+                value={selectedDoctorId}
+                onChange={(e) => setSelectedDoctorId(e.target.value)}
+                style={{ minWidth: 220 }}
+              >
+                <option value="">— Assign a Doctor —</option>
+                {unassignedDoctors.map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    {doc.display_name || doc.email} ({doc.email})
+                  </option>
+                ))}
+              </select>
+              <Button
+                type="submit"
+                variant="teal"
+                disabled={!selectedDoctorId}
+                loading={assigningDoctor}
+              >
+                Grant Access
+              </Button>
+            </form>
+          )}
+        </div>
+      </GlassCard>
+
+      {/* Two-Column Section: Symptom Check History & Clinical Notes */}
       <div className="grid-2col" style={{ alignItems: 'start' }}>
         {/* Left Column: Associated Symptom Checks */}
         <GlassCard>
@@ -388,7 +565,7 @@ export default function PatientDetailPage() {
 
           {symptomHistory.length === 0 ? (
             <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)' }}>
-              No symptom checks have been linked to this fictional patient yet.
+              No symptom checks have been linked to this health record yet.
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
@@ -442,6 +619,12 @@ export default function PatientDetailPage() {
                       {chk.duration && <span> · <strong>Duration:</strong> {chk.duration}</span>}
                     </div>
 
+                    {chk.additional_notes && (
+                      <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                        <strong>Notes:</strong> {chk.additional_notes}
+                      </div>
+                    )}
+
                     {chk.evaluation?.matched_categories?.length > 0 && (
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                         <strong>Matched Rules:</strong>{' '}
@@ -455,77 +638,98 @@ export default function PatientDetailPage() {
           )}
         </GlassCard>
 
-        {/* Right Column: Fictional Clinician Notes + Add Form */}
+        {/* Right Column: Clinical Notes + Doctor-Only Add Form */}
         <GlassCard>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
             <FileText size={20} color="var(--teal)" />
             <h2 style={{ fontSize: '1.05rem', fontWeight: 600 }}>
-              Fictional Clinician Notes ({notes.length})
+              Clinical Notes ({notes.length})
             </h2>
           </div>
 
-          {/* Add Note Form */}
-          <form
-            onSubmit={handleAddNote}
-            noValidate
-            style={{
-              background: 'var(--surface-muted)',
-              padding: '1rem',
-              borderRadius: 'var(--radius-md)',
-              marginBottom: '1.25rem',
-              border: '1px solid var(--border-subtle)',
-            }}
-          >
-            <div style={{ fontWeight: 600, fontSize: '0.88rem', marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>
-              Add Fictional Demo Note
-            </div>
-            <div className="form-grid-2">
+          {isDoctor ? (
+            <form
+              onSubmit={handleAddNote}
+              noValidate
+              style={{
+                background: 'var(--surface-muted)',
+                padding: '1rem',
+                borderRadius: 'var(--radius-md)',
+                marginBottom: '1.25rem',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div style={{ fontWeight: 600, fontSize: '0.88rem', marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>
+                Add Clinical Note (Assigned Doctor Only)
+              </div>
+              <div className="form-grid-2">
+                <FormField
+                  label="Author Name *"
+                  id="note-author"
+                  type="text"
+                  value={noteAuthor}
+                  onChange={(e) => setNoteAuthor(e.target.value)}
+                  error={noteErrors.author}
+                />
+                <FormField
+                  label="Note Category *"
+                  id="note-type"
+                  as="select"
+                  value={noteType}
+                  onChange={(e) => setNoteType(e.target.value)}
+                  error={noteErrors.note_type}
+                >
+                  {NOTE_TYPES.map((nt) => (
+                    <option key={nt.value} value={nt.value}>
+                      {nt.label}
+                    </option>
+                  ))}
+                </FormField>
+              </div>
+
               <FormField
-                label="Fictional Author Name *"
-                id="note-author"
-                type="text"
-                value={noteAuthor}
-                onChange={(e) => setNoteAuthor(e.target.value)}
-                error={noteErrors.author}
+                label="Clinical Note Content *"
+                id="note-content"
+                as="textarea"
+                rows={3}
+                placeholder="Enter clinical observations, recommendations, or follow-up guidance…"
+                value={noteContent}
+                onChange={(e) => setNoteContent(e.target.value)}
+                error={noteErrors.content}
               />
-              <FormField
-                label="Note Category *"
-                id="note-type"
-                as="select"
-                value={noteType}
-                onChange={(e) => setNoteType(e.target.value)}
-                error={noteErrors.note_type}
-              >
-                {NOTE_TYPES.map((nt) => (
-                  <option key={nt.value} value={nt.value}>
-                    {nt.label}
-                  </option>
-                ))}
-              </FormField>
-            </div>
 
-            <FormField
-              label="Demo Note Content *"
-              id="note-content"
-              as="textarea"
-              rows={3}
-              placeholder="Enter fictional clinical demonstration notes (e.g., advised hydration and rest)…"
-              value={noteContent}
-              onChange={(e) => setNoteContent(e.target.value)}
-              error={noteErrors.content}
-            />
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <Button type="submit" variant="teal" icon={Plus} loading={addingNote}>
-                Add Fictional Note
-              </Button>
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button type="submit" variant="teal" icon={Plus} loading={addingNote}>
+                  Save Clinical Note
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <div
+              style={{
+                background: 'var(--surface-muted)',
+                padding: '0.85rem 1rem',
+                borderRadius: 'var(--radius-md)',
+                marginBottom: '1.1rem',
+                border: '1px solid var(--border-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.6rem',
+                fontSize: '0.83rem',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              <Lock size={16} color="var(--text-muted)" />
+              <span>
+                Clinical notes are read-only for <strong>patient</strong> accounts. Only an assigned <strong>doctor</strong> can author new notes.
+              </span>
             </div>
-          </form>
+          )}
 
           {/* Notes Timeline */}
           {notes.length === 0 ? (
             <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)' }}>
-              No fictional clinician notes recorded for this patient yet.
+              No clinical notes recorded for this patient yet.
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
@@ -540,8 +744,13 @@ export default function PatientDetailPage() {
                   }}
                 >
                   <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.4rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
                       <strong style={{ fontSize: '0.88rem' }}>{n.author}</strong>
+                      {n.doctor_email && (
+                        <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                          ({n.doctor_email})
+                        </span>
+                      )}
                       <span className="badge badge-teal" style={{ textTransform: 'capitalize' }}>
                         {n.note_type.replace(/_/g, ' ')}
                       </span>
@@ -553,9 +762,6 @@ export default function PatientDetailPage() {
                   <p style={{ fontSize: '0.88rem', color: 'var(--text-primary)', marginBottom: '0.4rem', whiteSpace: 'pre-wrap' }}>
                     {n.content}
                   </p>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                    {n.demo_label || 'FICTIONAL DEMO NOTE'}
-                  </div>
                 </div>
               ))}
             </div>
@@ -569,7 +775,7 @@ export default function PatientDetailPage() {
           <div className="modal-content">
             <div className="modal-header">
               <h2 id="edit-detail-modal-title" style={{ fontSize: '1.15rem', fontWeight: 700 }}>
-                Edit Demo Patient #{patient.id}
+                Edit Patient Record #{patient.id}
               </h2>
               <button
                 type="button"
@@ -632,7 +838,7 @@ export default function PatientDetailPage() {
 
               <div className="form-grid-2">
                 <FormField
-                  label="Demo Email"
+                  label="Email"
                   id="edit-email"
                   type="email"
                   value={editForm.email}
@@ -640,7 +846,7 @@ export default function PatientDetailPage() {
                   error={editErrors.email}
                 />
                 <FormField
-                  label="Demo Phone"
+                  label="Phone"
                   id="edit-phone"
                   type="text"
                   value={editForm.phone}
@@ -665,7 +871,7 @@ export default function PatientDetailPage() {
                   ))}
                 </FormField>
                 <FormField
-                  label="Fictional Address"
+                  label="Address"
                   id="edit-address"
                   type="text"
                   value={editForm.address}
@@ -682,7 +888,7 @@ export default function PatientDetailPage() {
                   onChange={(e) => setEditForm({ ...editForm, allergies: e.target.value })}
                 />
                 <FormField
-                  label="Medications"
+                  label="Current Medications"
                   id="edit-medications"
                   type="text"
                   value={editForm.medications}
@@ -691,7 +897,7 @@ export default function PatientDetailPage() {
               </div>
 
               <FormField
-                label="Profile Notes"
+                label="Medical History / Profile Notes"
                 id="edit-notes"
                 as="textarea"
                 rows={3}
@@ -718,7 +924,7 @@ export default function PatientDetailPage() {
           <div className="modal-content" style={{ maxWidth: 450 }}>
             <div className="modal-header">
               <h2 id="del-detail-modal-title" style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--danger)' }}>
-                Confirm Demo Patient Deletion
+                Confirm Patient Profile Deletion
               </h2>
               <button
                 type="button"
@@ -730,7 +936,7 @@ export default function PatientDetailPage() {
               </button>
             </div>
             <p style={{ fontSize: '0.925rem', color: 'var(--text-secondary)' }}>
-              Are you sure you want to delete fictional demo patient{' '}
+              Are you sure you want to delete the health profile for{' '}
               <strong>
                 {patient.first_name} {patient.last_name} (#{patient.id})
               </strong>

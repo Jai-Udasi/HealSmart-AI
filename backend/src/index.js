@@ -9,11 +9,13 @@ const rateLimit = require('express-rate-limit');
 
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const healthRouter = require('./routes/health');
+const authRouter = require('./routes/auth');
 const patientsRouter = require('./routes/patients');
 const symptomsRouter = require('./routes/symptoms');
 const dashboardRouter = require('./routes/dashboard');
 const notesRouter = require('./routes/notes');
 const { getDb, closeDb } = require('./db/database');
+const { initFirebaseAdmin } = require('./config/firebaseAdmin');
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '5000', 10);
@@ -33,9 +35,10 @@ app.use(cors({
 }));
 
 // ── Rate limiting ──────────────────────────────────────────────────────────
+const isDev = (process.env.NODE_ENV || 'development') !== 'production';
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 min
-  max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
+  max: parseInt(process.env.RATE_LIMIT_MAX || (isDev ? '2000' : '200'), 10),
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -59,6 +62,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 // ── Routes ─────────────────────────────────────────────────────────────────
 app.use('/api/health', healthRouter);
+app.use('/api/auth', authRouter);
 app.use('/api/patients', patientsRouter);
 app.use('/api/symptoms', symptomsRouter);
 app.use('/api/dashboard', dashboardRouter);
@@ -68,11 +72,12 @@ app.use('/api/notes', notesRouter);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-// ── Initialise DB then start server ───────────────────────────────────────
+// ── Initialise DB & Firebase Admin then start server ──────────────────────
 try {
   getDb(); // runs migrations synchronously
+  initFirebaseAdmin();
 } catch (err) {
-  console.error('[FATAL] Cannot initialise database:', err.message);
+  console.error('[FATAL] Startup initialisation failed:', err.message);
   process.exit(1);
 }
 
@@ -80,7 +85,7 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`\n🏥  HealSmartAI API running`);
   console.log(`    http://localhost:${PORT}/api/health (bound to ${HOST})`);
   console.log(`    ENV: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`    [NOTICE] Local-only demo server: Authentication & RBAC are NOT implemented.\n`);
+  console.log(`    [AUTH] Firebase ID Token verification & SQLite RBAC enabled.\n`);
 });
 
 // ── Graceful shutdown ──────────────────────────────────────────────────────

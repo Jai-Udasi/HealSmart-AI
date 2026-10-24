@@ -5,11 +5,15 @@ const Joi = require('joi');
 const { getDb } = require('../db/database');
 const validate = require('../middleware/validate');
 const asyncHandler = require('../middleware/asyncHandler');
+const { requireAuth, requireRole, canAccessPatient } = require('../middleware/auth');
 
 const router = express.Router();
 
-const DEMO_NOTES_NOTICE =
-  'DEMO-ONLY: Fictional clinician note for local demonstration purposes only. No real medical professional has authored or reviewed this record.';
+// All notes routes require authentication
+router.use(requireAuth);
+
+const CLINICAL_NOTES_NOTICE =
+  'Educational Clinical Note — Recorded by an authorized doctor account in local SQLite. Not a legal medical record or clinical diagnosis.';
 
 const VALID_NOTE_TYPES = ['general', 'diagnosis', 'prescription', 'follow_up', 'lab_result'];
 
@@ -42,7 +46,8 @@ const createNoteSchema = Joi.object({
     .trim()
     .min(2)
     .max(100)
-    .default('Dr. Attending (Demo)')
+    .optional()
+    .allow('')
     .messages({
       'string.min': 'author display name must be at least 2 characters',
       'string.max': 'author display name cannot exceed 100 characters',
@@ -70,15 +75,16 @@ function formatNoteRow(row) {
   return {
     id: row.id,
     patient_id: row.patient_id,
+    doctor_user_id: row.doctor_user_id,
+    doctor_email: row.doctor_email || null,
     patient_name:
       row.patient_first_name && row.patient_last_name
-        ? `${row.patient_first_name} ${row.patient_last_name} (Demo)`
+        ? `${row.patient_first_name} ${row.patient_last_name}`
         : null,
     author: row.author,
     note_type: row.note_type,
     content: row.content,
-    is_fictional_demo_note: true,
-    demo_label: 'FICTIONAL DEMO NOTE — NOT REAL MEDICAL ADVICE OR CLINICAL DOCUMENTATION',
+    disclaimer_label: 'EDUCATIONAL CLINICAL NOTE — NON-DIAGNOSTIC',
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -88,7 +94,9 @@ function formatNoteRow(row) {
 
 /**
  * GET /api/notes
- * List saved demo notes with optional patient_id and note_type filtering and pagination.
+ * List saved clinical notes scoped strictly to the authenticated user's accessible patients.
+ * - Patient role: notes for their own patient profile (owner_user_id = req.user.id).
+ * - Doctor role: notes for patients currently assigned to req.user.id in doctor_patient_assignments.
  */
 router.get(
   '/',
@@ -97,21 +105,34 @@ router.get(
     const db = getDb();
     const { page, limit, patient_id, note_type } = req.validatedQuery;
     const offset = (page - 1) * limit;
+    const userId = req.user.id;
+    const isDoctor = req.user.role === 'doctor';
 
-    // If patient_id filter is provided, verify the demo patient exists
     if (patient_id !== undefined) {
-      const patientExists = db
-        .prepare('SELECT id FROM patients WHERE id = ?')
+      const targetPatient = db
+        .prepare('SELECT * FROM patients WHERE id = ?')
         .get(patient_id);
-      if (!patientExists) {
-        const err = new Error(`Demo patient with ID ${patient_id} not found`);
+      if (!targetPatient) {
+        const err = new Error(`Patient with ID ${patient_id} not found`);
         err.status = 404;
+        throw err;
+      }
+      if (!canAccessPatient(db, req.user, targetPatient)) {
+        const err = new Error('Access denied: You are not authorized to view notes for this patient.');
+        err.status = 403;
         throw err;
       }
     }
 
-    const conditions = [];
-    const params = { limit, offset };
+    const scopeCondition = isDoctor
+      ? `EXISTS (
+           SELECT 1 FROM doctor_patient_assignments dpa
+           WHERE dpa.patient_id = dn.patient_id AND dpa.doctor_user_id = @userId
+         )`
+      : `p.owner_user_id = @userId`;
+
+    const conditions = ['p.owner_user_id IS NOT NULL', scopeCondition];
+    const params = { userId, limit, offset };
 
     if (patient_id !== undefined) {
       conditions.push('dn.patient_id = @patient_id');
@@ -122,10 +143,15 @@ router.get(
       params.note_type = note_type;
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     const total = db
-      .prepare(`SELECT COUNT(*) AS count FROM doctor_notes dn ${whereClause}`)
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM doctor_notes dn
+        JOIN patients p ON dn.patient_id = p.id
+        ${whereClause}
+      `)
       .get(params).count;
 
     const rows = db
@@ -133,9 +159,11 @@ router.get(
         SELECT
           dn.*,
           p.first_name AS patient_first_name,
-          p.last_name  AS patient_last_name
+          p.last_name  AS patient_last_name,
+          u.email      AS doctor_email
         FROM doctor_notes dn
-        LEFT JOIN patients p ON dn.patient_id = p.id
+        JOIN patients p ON dn.patient_id = p.id
+        LEFT JOIN users u ON dn.doctor_user_id = u.id
         ${whereClause}
         ORDER BY dn.id DESC
         LIMIT @limit OFFSET @offset
@@ -148,7 +176,7 @@ router.get(
     return res.status(200).json({
       success: true,
       meta: {
-        demo_notice: DEMO_NOTES_NOTICE,
+        notice: CLINICAL_NOTES_NOTICE,
       },
       data: {
         notes,
@@ -167,37 +195,60 @@ router.get(
 
 /**
  * POST /api/notes
- * Create a new fictional demo note linked to an existing demo patient.
+ * Restricted strictly to users with `doctor` role (`requireRole('doctor')`).
+ * Furthermore, the doctor must be explicitly assigned to the target patient record.
  */
 router.post(
   '/',
+  requireRole('doctor'),
   validate(createNoteSchema, 'body'),
   asyncHandler(async (req, res) => {
     const db = getDb();
     const { patient_id, author, note_type, content } = req.body;
 
-    // Verify demo patient exists
     const patient = db
-      .prepare('SELECT id, first_name, last_name FROM patients WHERE id = ?')
+      .prepare('SELECT * FROM patients WHERE id = ?')
       .get(patient_id);
 
     if (!patient) {
-      const err = new Error(`Demo patient with ID ${patient_id} not found`);
+      const err = new Error(`Patient with ID ${patient_id} not found`);
       err.status = 404;
       throw err;
     }
 
+    // Strictly verify explicit assignment in doctor_patient_assignments
+    const isAssigned = db
+      .prepare(
+        'SELECT 1 FROM doctor_patient_assignments WHERE doctor_user_id = ? AND patient_id = ?'
+      )
+      .get(req.user.id, patient.id);
+
+    if (!patient.owner_user_id || !isAssigned) {
+      const err = new Error(
+        'Access denied: Doctors can only create notes for patients explicitly assigned to them.'
+      );
+      err.status = 403;
+      throw err;
+    }
+
+    const resolvedAuthor =
+      (author && author.trim()) ||
+      req.user.display_name ||
+      req.user.email ||
+      'Assigned Physician';
+
     const insertStmt = db.prepare(`
       INSERT INTO doctor_notes (
-        patient_id, author, note_type, content
+        patient_id, doctor_user_id, author, note_type, content
       ) VALUES (
-        @patient_id, @author, @note_type, @content
+        @patient_id, @doctor_user_id, @author, @note_type, @content
       )
     `);
 
     const info = insertStmt.run({
       patient_id,
-      author,
+      doctor_user_id: req.user.id,
+      author: resolvedAuthor,
       note_type,
       content,
     });
@@ -207,9 +258,11 @@ router.post(
         SELECT
           dn.*,
           p.first_name AS patient_first_name,
-          p.last_name  AS patient_last_name
+          p.last_name  AS patient_last_name,
+          u.email      AS doctor_email
         FROM doctor_notes dn
         LEFT JOIN patients p ON dn.patient_id = p.id
+        LEFT JOIN users u ON dn.doctor_user_id = u.id
         WHERE dn.id = ?
       `)
       .get(info.lastInsertRowid);
@@ -217,7 +270,7 @@ router.post(
     return res.status(201).json({
       success: true,
       meta: {
-        demo_notice: DEMO_NOTES_NOTICE,
+        notice: CLINICAL_NOTES_NOTICE,
       },
       data: formatNoteRow(createdRow),
     });

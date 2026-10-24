@@ -5,6 +5,12 @@ node_modules/
 .env
 .env.*
 !.env.example
+frontend/.env.local.txt
+
+# ── Firebase Service Account & Credentials ────────────────────────────────
+*firebase-adminsdk*.json
+service-account*.json
+serviceAccountKey.json
 
 # ── Database files ────────────────────────────────────────────────────────
 *.db

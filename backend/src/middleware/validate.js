@@ -22,6 +22,7 @@ function validate(schema, property = 'body') {
 
       const err = new Error(`Validation failed: ${details.map((d) => d.message).join('; ')}`);
       err.status = 400;
+      err.code = 'VALIDATION_ERROR';
       err.details = details;
       return next(err);
     }
