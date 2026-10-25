@@ -26,7 +26,29 @@ function initFirebaseAdmin() {
   }
 
   const projectId = (process.env.FIREBASE_PROJECT_ID || '').trim();
+  const serviceAccountJson = (process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim();
   const serviceAccountPath = (process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '').trim();
+
+  if (serviceAccountJson) {
+    let serviceAccount;
+    try {
+      serviceAccount = JSON.parse(serviceAccountJson);
+    } catch (parseErr) {
+      const err = new Error(
+        `Firebase Admin setup error: Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON environment variable: ${parseErr.message}`
+      );
+      err.status = 500;
+      throw err;
+    }
+
+    const app = initializeApp({
+      credential: cert(serviceAccount),
+      projectId: projectId || serviceAccount.project_id,
+    });
+    initMode = 'service_account_json';
+    console.log('[Auth] Official Firebase Admin SDK initialized with FIREBASE_SERVICE_ACCOUNT_JSON credentials.');
+    return { auth: getAuth(app), initMode };
+  }
 
   if (serviceAccountPath) {
     const resolvedSaPath = path.resolve(serviceAccountPath);
@@ -93,7 +115,10 @@ function initFirebaseAdmin() {
  */
 async function verifyFirebaseToken(idToken) {
   const { auth, initMode: mode } = initFirebaseAdmin();
-  const checkRevoked = mode === 'service_account_file' || mode === 'application_default_credentials';
+  const checkRevoked =
+    mode === 'service_account_file' ||
+    mode === 'service_account_json' ||
+    mode === 'application_default_credentials';
   return auth.verifyIdToken(idToken, checkRevoked);
 }
 

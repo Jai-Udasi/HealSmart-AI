@@ -2,11 +2,13 @@ import axios from 'axios';
 import { auth } from '../config/firebase';
 
 /**
- * Centralized Axios client configured to use relative /api endpoints
- * proxied through Vite to http://localhost:5000.
+ * Centralized Axios client configured to use VITE_API_BASE_URL when deployed
+ * or relative /api endpoints proxied through Vite to http://localhost:5000.
  */
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
+
 const apiClient = axios.create({
-  baseURL: '/api',
+  baseURL: apiBaseUrl,
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',

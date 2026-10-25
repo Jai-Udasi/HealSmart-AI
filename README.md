@@ -1,155 +1,108 @@
-# HealSmartAI — Full-Stack Healthcare Information & Patient Workflow Portal
+# HealSmartAI — Full-Stack Healthcare Education & Patient Workflow Platform
 
-> **Important Disclaimers & Scope Notice**
-> - **100% Free Smart Local Symptom Engine (Default) + Optional OpenAI Adapter (Disabled by Default):** Symptom evaluations are powered out-of-the-box by a **free, local, deterministic Smart Symptom Engine** (`backend/src/services/symptomEngine.js`) that performs synonym normalization, multi-symptom combination analysis, context-aware explanations, follow-up question generation, and conservative emergency red-flag screening. An optional backend OpenAI adapter (`backend/src/services/openaiService.js`) is included and **disabled by default (`OPENAI_ENABLED=false`)** so the project requires zero paid API credits or subscriptions to run.
-> - **Firebase Authentication & SQLite RBAC:** User identity is verified via the official **Firebase Authentication** Web SDK and **Firebase Admin SDK** (`firebase-admin/auth` `verifyIdToken()`), while application data and role-based access control (`patient` vs. `doctor` roles, 1-to-1 profile ownership, and explicit doctor-patient assignments/revocations) are persisted locally in **SQLite** (`better-sqlite3`).
-> - **Non-Diagnostic & Educational Scope:** This application is strictly for software engineering demonstration and general health education. It does **not** diagnose diseases, never calculates diagnosis probabilities or confidence percentages, cannot reliably rule out medical emergencies via keyword screening, and is not a HIPAA-certified clinical system.
+[![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
+[![Frontend](https://img.shields.io/badge/Frontend-React_18_%7C_Vite_6-blue.svg)]()
+[![Backend](https://img.shields.io/badge/Backend-Node.js_%7C_Express_5-green.svg)]()
+[![Database](https://img.shields.io/badge/Database-SQLite_3_(WAL)-lightgrey.svg)]()
+[![Auth](https://img.shields.io/badge/Auth-Firebase_Admin_v14-orange.svg)]()
+[![Cost](https://img.shields.io/badge/Cost-100%25_Free_to_Run-success.svg)]()
 
----
-
-## 1. Project Overview
-
-**HealSmartAI** is a full-stack healthcare information and role-scoped patient workflow web application built with **React + Vite**, **Node.js + Express**, **Firebase Authentication**, and **SQLite**.
-
-It demonstrates:
-- Official Firebase ID token verification middleware (`getAuth().verifyIdToken()`).
-- Strict patient/doctor role-based authorization (RBAC) with 1-to-1 patient health profiles and immediate doctor assignment/revocation controls.
-- A **Free Smart Symptom Assistant** supporting synonym normalization, multi-symptom pattern combinations, severity/duration context synthesis, clarifying follow-up questions, and deterministic emergency red-flag detection.
-- An **Optional OpenAI Educational Adapter** (`OPENAI_ENABLED=false` by default) that strips all personal identifiers, enforces strict request timeouts, never overrides deterministic emergency warnings, and falls back seamlessly to the free local engine.
+> **Notice & Educational Disclaimer**  
+> **HealSmartAI** is an informational software engineering project and educational health resource. It does **not** diagnose diseases, compute clinical probabilities, prescribe medications, or replace professional medical consultation. If you are experiencing a medical emergency, immediately contact your local emergency services (such as 911).
 
 ---
 
-## 2. Technology Stack
+## 1. Executive Summary
 
-| Layer | Technology | Version / Details |
+**HealSmartAI** is a full-stack healthcare education and role-scoped patient workflow web application. Built with **React 18 + Vite 6**, **Node.js + Express 5**, **SQLite (`better-sqlite3`)**, and **Firebase Authentication**, the platform provides:
+
+- **Cryptographic Authentication & Server-Enforced RBAC:** Integrates the official Firebase Admin SDK (`firebase-admin/auth` `verifyIdToken()`) with server-side SQLite authorization separating `patient` and `doctor` roles.
+- **1-to-1 Patient Health Profile & Doctor Consent Management:** Each registered patient manages a single canonical health profile (`GET /api/patients/me`, `PUT /api/patients/me`) and retains full authority to explicitly grant (`POST /api/patients/:id/assign-doctor`) or immediately revoke (`DELETE /api/patients/:id/assign-doctor/:doctorUserId`) clinical access to specific doctors.
+- **100% Free Smart Deterministic Symptom Engine v2:** Analyzes user symptoms locally with zero external API calls or billing. Features 12 synonym normalization groups, 10 clinical categories, 5 multi-symptom combination rules, severity/duration context explanations, clarifying follow-up questions, and deterministic emergency red-flag screening.
+- **Optional Privacy-Preserving OpenAI Educational Adapter:** An optional integration (`OPENAI_ENABLED=false` by default) that strips all PII (names, emails, phone numbers, identifiers), enforces strict timeouts, validates responses, never overrides deterministic emergency safety warnings, and gracefully falls back to the free local engine.
+- **Doctor Clinical Workspace & Notes:** Verified doctors access live SQLite KPIs (`/api/dashboard/stats`, `/api/dashboard/recent`) and can author structured clinical observation notes (`/api/notes`) strictly scoped to currently assigned patients.
+
+---
+
+## 2. Documentation Index
+
+Comprehensive technical documentation is organized in the [`docs/`](file:///E:/HealSmartAI/docs/) directory:
+
+| Document | Description |
+|---|---|
+| [**Project Report**](file:///E:/HealSmartAI/docs/PROJECT_REPORT.md) | Introduction, problem statement, objectives, existing vs. proposed systems, implementation details, limitations, and future scope. |
+| [**Architecture & Data Flow**](file:///E:/HealSmartAI/docs/ARCHITECTURE.md) | System components, request pipeline, and Mermaid sequence diagrams for authentication, symptom checks, and doctor consent. |
+| [**Database Schema Reference**](file:///E:/HealSmartAI/docs/DATABASE_SCHEMA.md) | Relational ER diagram, table columns, constraints, foreign keys, and indexes for `users`, `patients`, `symptom_checks`, `doctor_notes`, and `doctor_patient_assignments`. |
+| [**REST API Documentation**](file:///E:/HealSmartAI/docs/API_DOCUMENTATION.md) | Endpoint specifications, HTTP methods, headers, authentication/authorization requirements, request payloads, and response envelopes. |
+| [**Testing & Verification Report**](file:///E:/HealSmartAI/docs/TESTING_REPORT.md) | Summary of 89 automated checks across Phase 4A (44 checks), Phase 4B (28 checks), Phase 4C (17 checks), and Playwright browser tests. |
+| [**End-to-End User Guide**](file:///E:/HealSmartAI/docs/USER_GUIDE.md) | Step-by-step walkthrough for patient signup, 1-to-1 health profile setup, symptom checks, doctor assignment, and doctor dashboard usage. |
+| [**Technical Interview Preparation**](file:///E:/HealSmartAI/docs/INTERVIEW_PREPARATION.md) | 2–3 minute demonstration script, architectural breakdown, 20 interview Q&As, and key engineering challenges solved. |
+| [**Screenshot Checklist**](file:///E:/HealSmartAI/docs/SCREENSHOT_CHECKLIST.md) | 11 key desktop and mobile screenshot specifications with capture instructions and viewports. |
+| [**Free Deployment Guide**](file:///E:/HealSmartAI/docs/DEPLOYMENT_GUIDE.md) | In-depth Vercel serverless compatibility analysis, free-tier hosting architectures ($0/month on Vercel + Render/Turso), and step-by-step setup. |
+
+---
+
+## 3. Technology Stack
+
+| Layer | Technologies & Libraries | Key Responsibilities |
 |---|---|---|
-| **Frontend Framework** | React + Vite | React `^18.3.1`, Vite `^6.0.5` |
-| **Authentication** | Firebase Auth + Official Admin SDK | `firebase@^13.1.0` (Frontend), `firebase-admin@^14.5.0` (Backend `firebase-admin/auth`) |
-| **Routing & Icons** | React Router DOM + Lucide React | `react-router-dom@^6.28.0`, `lucide-react@^0.468.0` |
-| **HTTP Client** | Axios | `axios@^1.7.9` (attaches `Authorization: Bearer <idToken>` automatically) |
-| **Styling** | Custom CSS Design System | Light theme, glassmorphism (`backdrop-filter: blur`), CSS custom properties, responsive mobile drawer |
-| **Backend Runtime & Framework** | Node.js + Express | Node.js `>=18`, Express `^5.3.0` |
-| **Database** | SQLite (`better-sqlite3`) | `better-sqlite3@^13.0.3` with WAL mode, foreign keys, and non-destructive migrations |
-| **Validation & Security** | Joi, Helmet, CORS, Rate Limit | `joi@^18.3.0`, `helmet@^8.3.0`, `cors@^2.8.6`, `express-rate-limit@^8.7.1` |
+| **Frontend** | React `^18.3.1`, Vite `^6.0.5`, React Router DOM `^6.28.0`, Lucide React | Single-page application, responsive glassmorphism UI, client-side route protection |
+| **HTTP Client** | Axios `^1.7.9` | Centralized API client with automatic Firebase Bearer token injection and error normalization |
+| **Authentication** | Firebase Web SDK `^13.1.0` & Firebase Admin SDK `^14.5.0` | Client-side email/password authentication & cryptographic RS256 token verification (`verifyIdToken()`) |
+| **Backend** | Node.js `>=18`, Express `^5.3.0` | REST API, role-based authorization, rate limiting, and input validation |
+| **Database** | SQLite 3 via `better-sqlite3@^13.0.3` | Relational persistence, WAL mode, foreign key enforcement, automatic idempotent migrations |
+| **Security & Validation** | Joi `^18.3.0`, Helmet `^8.3.0`, CORS `^2.8.6`, Express Rate Limit `^8.7.1` | Request schema validation, secure HTTP headers, origin whitelisting, DoS protection |
+| **Symptom Engine** | Smart Deterministic Symptom Engine v2 (`backend/src/services/symptomEngine.js`) | 100% free local rule matching, synonym mapping, multi-symptom combinations, red flags |
 
 ---
 
-## 3. Free Deterministic Smart Engine vs. Optional OpenAI Integration
+## 4. Local Installation & Development Setup
 
-| Aspect | Free Smart Local Engine (`local_rule_engine`) | Optional OpenAI Adapter (`openai`) |
-|---|---|---|
-| **Default Status** | **Enabled by default** (`OPENAI_ENABLED=false`) | **Disabled by default** (`OPENAI_ENABLED=false`) |
-| **Cost / Billing** | **100% Free** — runs entirely locally in Node.js with zero external API calls | **Separate Paid API Billing** — OpenAI API usage is billed separately by OpenAI (distinct from ChatGPT Plus) and may incur charges if enabled with a live key |
-| **Capabilities** | Synonym & variation normalization, 10 structured clinical categories, 5 multi-symptom combination rules, duration/severity context explanations, clarifying follow-up questions, self-care tips, and red-flag warnings | Supplements `context_explanations`, `follow_up_questions`, `self_care_tips`, and `when_to_seek_medical_advice` using bounded JSON output |
-| **Emergency Red-Flag Screening** | **Always runs deterministically first** before any optional AI logic | **Never overrides or suppresses** local emergency warnings; local `emergency_safety` is always preserved |
-| **Privacy & PII Protection** | Stays 100% on `127.0.0.1` in local SQLite | Strips all names, emails, phone numbers, Firebase UIDs, and `patient_id` values before any request; redacts email/phone patterns from free text |
-| **Fallback Behavior** | Always available | Automatically falls back to the Free Smart Local Engine if disabled, unconfigured, rate-limited, or timed out (`OPENAI_TIMEOUT_MS=8000`) |
+### Prerequisites
+- Node.js `>= 18.0.0`
+- npm `>= 9.0.0`
+- A free Firebase project with **Email/Password** authentication enabled.
 
-> **Verification Note:** During development and automated testing of HealSmartAI, `OPENAI_ENABLED` remained `false` with no OpenAI API key required, and **zero paid OpenAI API requests were made**. Optional OpenAI adapter behavior was verified exclusively via local mock injection.
-
----
-
-## 4. Architecture & Folder Structure
-
-```text
-E:\HealSmartAI\
-├── backend/
-│   ├── src/
-│   │   ├── config/
-│   │   │   └── firebaseAdmin.js    # Official Firebase Admin SDK (firebase-admin/auth) verifyIdToken()
-│   │   ├── db/
-│   │   │   └── database.js         # SQLite connection, WAL pragma, non-destructive migrations
-│   │   ├── middleware/
-│   │   │   ├── auth.js             # requireAuth, requireRole, and canAccessPatient RBAC helpers
-│   │   │   ├── asyncHandler.js     # Async route wrapper
-│   │   │   ├── errorHandler.js     # Centralized JSON error handler
-│   │   │   └── validate.js         # Reusable Joi validation middleware
-│   │   ├── routes/
-│   │   │   ├── health.js           # GET /api/health (Public)
-│   │   │   ├── auth.js             # GET /api/auth/me, PUT /api/auth/profile, POST /api/auth/dev-approve-doctor
-│   │   │   ├── patients.js         # 1-to-1 profile (/me), CRUD, assign-doctor, and revoke-doctor
-│   │   │   ├── symptoms.js         # Smart symptom evaluation, engine-status, & scoped history
-│   │   │   ├── dashboard.js        # Doctor-only assigned-patient stats & recent checks feed
-│   │   │   └── notes.js            # Assigned-patient clinical notes list & doctor-only creation
-│   │   ├── scripts/
-│   │   │   └── approveDoctor.js    # Local-dev CLI script to promote a user email to 'doctor'
-│   │   ├── services/
-│   │   │   ├── symptomEngine.js    # Free Smart Deterministic Symptom & Combination Engine (v2)
-│   │   │   └── openaiService.js    # Optional OpenAI adapter (disabled by default, PII-scrubbed)
-│   │   └── index.js                # Express app setup, security middleware, 127.0.0.1 server
-│   ├── .env.example                # Safe placeholder environment variables
-│   └── package.json
-├── frontend/
-│   ├── src/
-│   │   ├── api/
-│   │   │   └── client.js           # Axios client with Firebase Bearer token interceptor
-│   │   ├── components/
-│   │   │   ├── Layout.jsx          # Role-aware sidebar, local-dev doctor modal, sign-out button
-│   │   │   ├── ProtectedRoute.jsx  # ProtectedRoute & PublicOnlyRoute wrappers
-│   │   │   └── UI.jsx              # GlassCard, Button, FormField, NoticeBanner, Loading/Error
-│   │   ├── config/
-│   │   │   └── firebase.js         # Environment-based Firebase Web SDK initialization
-│   │   ├── context/
-│   │   │   └── AuthContext.jsx     # Firebase Auth state + SQLite role synchronization
-│   │   ├── pages/
-│   │   │   ├── LoginPage.jsx
-│   │   │   ├── SignupPage.jsx
-│   │   │   ├── ForgotPasswordPage.jsx
-│   │   │   ├── AccessDeniedPage.jsx
-│   │   │   ├── HomePage.jsx
-│   │   │   ├── SymptomCheckerPage.jsx
-│   │   │   ├── PatientsPage.jsx
-│   │   │   ├── PatientDetailPage.jsx
-│   │   │   └── DashboardPage.jsx
-│   │   ├── styles/
-│   │   │   └── global.css          # Light glassmorphism design tokens & responsive rules
-│   │   ├── App.jsx                 # React Router v6 public & protected route definitions
-│   │   └── main.jsx                # React DOM entry
-│   ├── .env.example                # Safe placeholder VITE_FIREBASE_* variables
-│   ├── index.html
-│   ├── vite.config.js              # Vite dev/preview server & /api proxy to :5000
-│   └── package.json
-├── .gitignore
-└── README.md
+### Step 1: Clone Repository
+```powershell
+git clone https://github.com/Jai-Udasi/HealSmart-AI.git
+Set-Location E:\HealSmartAI
 ```
 
----
-
-## 5. Environment Variables & Setup
-
-### Backend (`E:\HealSmartAI\backend\.env`)
-
-Copy `backend/.env.example` to `backend/.env`:
-
+### Step 2: Configure Backend Environment
+Navigate to `backend/` and copy `.env.example` to `.env`:
+```powershell
+Set-Location E:\HealSmartAI\backend
+Copy-Item .env.example .env
+```
+Edit `backend/.env` with your values:
 ```ini
 HOST=127.0.0.1
 PORT=5000
 NODE_ENV=development
 DB_PATH=./data/healsmart.db
 RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX=100
+RATE_LIMIT_MAX=2000
 FRONTEND_URL=http://localhost:5173
 
-# Firebase Admin SDK Configuration (Required for Token Verification)
+# Firebase Admin Configuration
 FIREBASE_PROJECT_ID=your-firebase-project-id
-# Optional path to local Firebase service account JSON file
 FIREBASE_SERVICE_ACCOUNT_PATH=./service-account.json
 
-# Controlled local-development-only approval code for promoting a test user to 'doctor' role
+# Local Dev Doctor Promotion Code
 LOCAL_DOCTOR_APPROVAL_CODE=HEALSMART-LOCAL-DEV-DOCTOR
 
-# Optional OpenAI Integration (DISABLED BY DEFAULT — Free Smart Local Engine is used when false)
-# IMPORTANT: OpenAI API billing is separate from ChatGPT subscriptions and enabling it with a real key may incur charges.
+# Optional OpenAI (Keep false for 100% free mode)
 OPENAI_ENABLED=false
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_TIMEOUT_MS=8000
 ```
 
-### Frontend (`E:\HealSmartAI\frontend\.env.local`)
-
-Copy `frontend/.env.example` to `frontend/.env.local` and provide your Firebase Web App configuration:
-
+### Step 3: Configure Frontend Environment
+Navigate to `frontend/` and copy `.env.example` to `.env.local`:
+```powershell
+Set-Location E:\HealSmartAI\frontend
+Copy-Item .env.example .env.local
+```
+Fill in your Firebase Web App configuration:
 ```ini
 VITE_FIREBASE_API_KEY=your-api-key
 VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
@@ -157,67 +110,66 @@ VITE_FIREBASE_PROJECT_ID=your-project-id
 VITE_FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
 VITE_FIREBASE_MESSAGING_SENDER_ID=your-sender-id
 VITE_FIREBASE_APP_ID=your-app-id
+VITE_API_BASE_URL=/api
 ```
+
+### Step 4: Run the Application
+
+**Terminal 1 — Backend API Server (`http://localhost:5000`):**
+```powershell
+Set-Location E:\HealSmartAI\backend
+npm install
+npm run dev
+```
+
+**Terminal 2 — Frontend Dev Server (`http://localhost:5173`):**
+```powershell
+Set-Location E:\HealSmartAI\frontend
+npm install
+npm run dev
+```
+
+Visit **`http://localhost:5173`** in your browser.
 
 ---
 
-## 6. Running Locally (Windows PowerShell)
+## 5. Doctor Role Promotion (Local Development)
 
-### Terminal 1 — Start the Express + SQLite Backend (`127.0.0.1:5000`)
+Public registration creates accounts with `role = 'patient'`. To test doctor-specific features (such as `/dashboard`, viewing assigned patients, and authoring clinical notes) in local development:
 
-```powershell
-Set-Location E:\HealSmartAI\backend
-npm run dev
-```
-
-### Terminal 2 — Start the React + Vite Frontend (`localhost:5173`)
-
-```powershell
-Set-Location E:\HealSmartAI\frontend
-npm run dev
-```
-
-### Controlled Local-Dev Doctor Role Approval
-
-Public signup always provisions accounts with `role = 'patient'`. In local development (`NODE_ENV !== 'production'`), you can promote a registered user to `doctor` either:
-1. Via the **Doctor Approval (Local Dev)** button in the sidebar using `LOCAL_DOCTOR_APPROVAL_CODE` (`HEALSMART-LOCAL-DEV-DOCTOR`), or
-2. Via the backend CLI script:
+1. Sign up a test user (e.g. `doctor@example.com`).
+2. Promote the user via the CLI script:
    ```powershell
    Set-Location E:\HealSmartAI\backend
    npm run approve-doctor -- doctor@example.com
    ```
+   *Alternatively*, click **Doctor Approval (Local Dev)** in the frontend sidebar and enter `HEALSMART-LOCAL-DEV-DOCTOR`.  
+   *(Note: Both mechanisms are strictly disabled when `NODE_ENV=production`).*
 
 ---
 
-## 7. API Endpoints Overview
+## 6. Testing & Quality Verification
 
-All endpoints except `GET /api/health` require `Authorization: Bearer <Firebase_ID_Token>`.
+Run unit, security, and integration verification suites:
 
-| Method | Endpoint | Auth / Role | Description |
-|---|---|---|---|
-| `GET` | `/api/health` | Public | API uptime, environment, SQLite version, and query latency. |
-| `GET` | `/api/auth/me` | Authenticated | Current user's SQLite profile, verified `role`, and `local_dev_mode` flag. |
-| `PUT` | `/api/auth/profile` | Authenticated | Update `display_name` in SQLite (blocks `role` spoofing with `400`). |
-| `POST` | `/api/auth/dev-approve-doctor` | Local-Dev Only | Controlled localhost role promotion requiring `LOCAL_DOCTOR_APPROVAL_CODE`. |
-| `GET` | `/api/auth/doctors` | Authenticated | Lists verified `doctor` accounts for patient assignment/revocation. |
-| `GET` | `/api/patients/me` | Authenticated | Retrieve the signed-in user's 1-to-1 health profile (`null` if not created yet). |
-| `PUT` | `/api/patients/me` | Authenticated | Create or update the signed-in user's 1-to-1 health profile. |
-| `GET` | `/api/patients` | Authenticated | Owned profile (patient) or assigned patients list (doctor). |
-| `POST` | `/api/patients` | Authenticated | Create a 1-to-1 patient profile (`409` if duplicate for same owner). |
-| `GET/PUT/DELETE` | `/api/patients/:id` | Owner / Assigned Doctor | Scoped access to a patient record (`DELETE` is owner-only). |
-| `POST` | `/api/patients/:id/assign-doctor` | Owner Only | Grant a doctor access to this patient record. |
-| `DELETE` | `/api/patients/:id/assign-doctor/:doctorUserId` | Owner Only | Immediately revoke a doctor's access to this patient record. |
-| `GET` | `/api/symptoms/engine-status` | Authenticated | Reports active symptom engine (`local_rule_engine` vs `openai`). |
-| `POST` | `/api/symptoms/check` | Authenticated | Evaluate symptoms, combinations, follow-ups, and red flags; persist to SQLite. |
-| `GET` | `/api/symptoms/history` | Authenticated | Paginated symptom-check history scoped to owner or assigned doctor. |
-| `GET/POST` | `/api/notes` | Owner / Assigned Doctor | View clinical notes (owner or assigned doctor) or create note (assigned doctor only). |
-| `GET` | `/api/dashboard/stats` | `doctor` Role Only | Live SQLite aggregate KPIs scoped strictly to currently assigned patients. |
-| `GET` | `/api/dashboard/recent` | `doctor` Role Only | Paginated recent symptom checks for currently assigned patients. |
+```powershell
+# Frontend production build
+Set-Location E:\HealSmartAI\frontend
+npm run build
+
+# Backend verification
+Set-Location E:\HealSmartAI\backend
+npm test
+```
+
+Verified test coverage includes:
+- **Phase 4A (44/44 passing):** Firebase token verification, RBAC route guarding, SQLite user provisioning.
+- **Phase 4B (28/28 passing):** 1-to-1 patient profiles, duplicate prevention (`409`), cross-patient `403` isolation, doctor assignment and immediate revocation.
+- **Phase 4C (17/17 passing):** Symptom synonym normalization, combination patterns, context notes, red-flag screening, PII scrubbing, mock OpenAI adapter fallback, and browser E2E workflows.
 
 ---
 
-## 8. Medical & Privacy Disclaimers
+## 7. License & Credits
 
-- **Not Medical Advice:** Nothing in HealSmartAI constitutes medical advice, clinical diagnosis, prognosis, or emergency triage. Always seek the advice of a physician or qualified healthcare provider with any questions regarding a medical condition.
-- **Emergency Screening Limitation:** Keyword screening cannot reliably rule out medical emergencies. If you think you may be experiencing a medical emergency, call your local emergency number (e.g., 911) immediately.
-- **Not HIPAA-Certified:** This software is an educational demonstration project and is not certified for storing real protected health information (PHI) in production clinical environments.
+This project was developed for educational and portfolio demonstration purposes.  
+Built by **Jai Udasi** ([GitHub Profile](https://github.com/Jai-Udasi)).
